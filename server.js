@@ -7,17 +7,27 @@ wss.on("connection", ws => {
   ws.on("message", msg => {
     const data = JSON.parse(msg);
 
-    if (!ws.room) {
+    if (data.room && !ws.room) {
       ws.room = data.room;
       if (!rooms.has(ws.room)) rooms.set(ws.room, new Set());
-      rooms.get(ws.room).add(ws);
+      
+      const room = rooms.get(ws.room);
+      room.add(ws);
+
+      // Logic fix: If two people are in the room, tell the first one to start
+      if (room.size === 2) {
+        const clients = Array.from(room);
+        clients[0].send(JSON.stringify({ role: "offerer" }));
+      }
       return;
     }
 
-    // relay signaling data to the other peer only
-    for (const client of rooms.get(ws.room)) {
-      if (client !== ws && client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify(data));
+    // Relay signaling data to the other peer only
+    if (rooms.has(ws.room)) {
+      for (const client of rooms.get(ws.room)) {
+        if (client !== ws && client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify(data));
+        }
       }
     }
   });
