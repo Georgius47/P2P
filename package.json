@@ -1,7 +1,7 @@
 {
   "name": "p2p-signaling-server",
   "version": "1.0.0",
-  "description": "Peer to peer signaling server for encrypted chat",
+  "description": "Secure P2P signaling server",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
