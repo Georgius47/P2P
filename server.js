@@ -1,72 +1,51 @@
 const WebSocket = require("ws");
 
-const PORT = process.env.PORT || 8080;
-const wss = new WebSocket.Server({ port: PORT });
+const server = new WebSocket.Server({
+  port: process.env.PORT
+});
 
-const rooms = new Map();
+const rooms = {};
 
-wss.on("connection", (ws) => {
-  ws.on("message", (message) => {
-    let data;
+server.on("connection", ws => {
 
-    try {
-      data = JSON.parse(message);
-    } catch {
-      return;
+  ws.on("message", message => {
+    const data = JSON.parse(message);
+
+    // If first time seeing this room
+    if (!rooms[data.room]) {
+      rooms[data.room] = [];
     }
 
-    const { room } = data;
-    if (!room) return;
-
-    // First time joining
-    if (!ws.room) {
-      ws.room = room;
-
-      if (!rooms.has(room)) {
-        rooms.set(room, new Set());
-      }
-
-      const peers = rooms.get(room);
-
-      // Limit to 2 peers only
-      if (peers.size >= 2) {
-        ws.close();
-        return;
-      }
-
-      peers.add(ws);
-
-      // First peer becomes offerer
-      if (peers.size === 1) {
-        ws.send(JSON.stringify({ role: "offerer" }));
-      }
-
-      return;
+    // If client not already stored, add it
+    if (!rooms[data.room].includes(ws)) {
+      rooms[data.room].push(ws);
     }
 
-    // Relay signaling data to other peer
-    const peers = rooms.get(ws.room);
-    if (!peers) return;
+    // If 2 users in room → tell FIRST one to create offer
+    if (rooms[data.room].length === 2) {
+      const firstUser = rooms[data.room][0];
+      if (firstUser.readyState === WebSocket.OPEN) {
+        firstUser.send(JSON.stringify({ role: "offerer" }));
+      }
+    }
 
-    for (const client of peers) {
+    // Forward SDP / ICE to the other peer
+    rooms[data.room].forEach(client => {
       if (client !== ws && client.readyState === WebSocket.OPEN) {
         client.send(JSON.stringify(data));
       }
-    }
+    });
   });
 
   ws.on("close", () => {
-    if (!ws.room) return;
-
-    const peers = rooms.get(ws.room);
-    if (!peers) return;
-
-    peers.delete(ws);
-
-    if (peers.size === 0) {
-      rooms.delete(ws.room);
+    for (const room in rooms) {
+      rooms[room] = rooms[room].filter(client => client !== ws);
+      if (rooms[room].length === 0) {
+        delete rooms[room];
+      }
     }
   });
+
 });
 
-console.log(`✅ Signaling server running on port ${PORT}`);
+console.log("Signaling server running");
