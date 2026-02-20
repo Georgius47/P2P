@@ -1,44 +1,72 @@
 const WebSocket = require("ws");
+
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
+
 const rooms = new Map();
 
-wss.on("connection", ws => {
-  ws.on("message", msg => {
-    const data = JSON.parse(msg);
+wss.on("connection", (ws) => {
+  ws.on("message", (message) => {
+    let data;
 
-    // Join room
-    if (data.room && !ws.room) {
-      ws.room = data.room;
-      if (!rooms.has(ws.room)) rooms.set(ws.room, new Set());
-      rooms.get(ws.room).add(ws);
+    try {
+      data = JSON.parse(message);
+    } catch {
       return;
     }
 
-    // NEW: If P2P fails (like on Tor), the server relays the encrypted message
-    if (data.relay && rooms.has(ws.room)) {
-      rooms.get(ws.room).forEach(client => {
-        if (client !== ws && client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify({ relay: data.relay }));
-        }
-      });
+    const { room } = data;
+    if (!room) return;
+
+    // First time joining
+    if (!ws.room) {
+      ws.room = room;
+
+      if (!rooms.has(room)) {
+        rooms.set(room, new Set());
+      }
+
+      const peers = rooms.get(room);
+
+      // Limit to 2 peers only
+      if (peers.size >= 2) {
+        ws.close();
+        return;
+      }
+
+      peers.add(ws);
+
+      // First peer becomes offerer
+      if (peers.size === 1) {
+        ws.send(JSON.stringify({ role: "offerer" }));
+      }
+
       return;
     }
 
-    // Standard signaling relay (for non-Tor users)
-    if (rooms.has(ws.room)) {
-      rooms.get(ws.room).forEach(client => {
-        if (client !== ws && client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify(data));
-        }
-      });
+    // Relay signaling data to other peer
+    const peers = rooms.get(ws.room);
+    if (!peers) return;
+
+    for (const client of peers) {
+      if (client !== ws && client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify(data));
+      }
     }
   });
 
   ws.on("close", () => {
-    if (ws.room && rooms.has(ws.room)) {
-      rooms.get(ws.room).delete(ws);
-      if (rooms.get(ws.room).size === 0) rooms.delete(ws.room);
+    if (!ws.room) return;
+
+    const peers = rooms.get(ws.room);
+    if (!peers) return;
+
+    peers.delete(ws);
+
+    if (peers.size === 0) {
+      rooms.delete(ws.room);
     }
   });
 });
+
+console.log(`✅ Signaling server running on port ${PORT}`);
